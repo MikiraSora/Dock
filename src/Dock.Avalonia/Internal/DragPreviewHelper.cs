@@ -1,84 +1,75 @@
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.VisualTree;
 using Dock.Avalonia.Controls;
 using Dock.Model.Core;
+using Iciclecreek.Avalonia.WindowManager;
 
 namespace Dock.Avalonia.Internal;
 
 internal class DragPreviewHelper
 {
-    private static readonly object s_sync = new();
-    private static DragPreviewWindow? s_window;
-    private static DragPreviewControl? s_control;
+    private DragPreviewControl? _control;
+    private DragPreviewWindow? _window;
 
-    private static PixelPoint GetPositionWithinWindow(Window window, PixelPoint position, PixelPoint offset)
+    private static WindowsPanel? FindDefaultWindowsPanel()
     {
-        var screen = window.Screens.ScreenFromPoint(position);
-        if (screen is { })
+        // search from top down
+        if (Application.Current?.ApplicationLifetime is ISingleViewApplicationLifetime singleView)
+            return singleView.MainView?.FindDescendantOfType<WindowsPanel>(true);
+
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+            return desktop.MainWindow?.FindDescendantOfType<WindowsPanel>(true);
+        return null;
+    }
+
+    private static PixelPoint GetPositionWithinWindow(ManagedWindow? window, PixelPoint position, PixelPoint offset)
+    {
+        var windowsPanel = window?.WindowsPanel ?? FindDefaultWindowsPanel();
+        var screen = TopLevel.GetTopLevel(windowsPanel)?.Screens?.ScreenFromPoint(position);
+        
+        if (screen is not null && windowsPanel is not null)
         {
-            var target = position + offset;
-            if (screen.WorkingArea.Contains(target))
-            {
-                return target;
-            }
+            var target = windowsPanel.PointToClient(position + offset);
+            var targetPosition = new PixelPoint((int)target.X, (int)target.Y);
+            if (screen.WorkingArea.Contains(targetPosition))
+                return targetPosition;
         }
+
         return position;
     }
 
     public void Show(IDockable dockable, PixelPoint position, PixelPoint offset)
     {
-        lock (s_sync)
-        {
-            if (s_window is null || s_control is null)
-            {
-                s_control = new DragPreviewControl
-                {
-                    Status = string.Empty
-                };
+        Hide();
 
-                s_window = new DragPreviewWindow
-                {
-                    Content = s_control
-                };
-            }
+        _control = new DragPreviewControl {Status = string.Empty};
 
-            s_window.DataContext = dockable;
-            s_control.Status = string.Empty;
-            s_window.Position = GetPositionWithinWindow(s_window, position, offset);
+        _window = new DragPreviewWindow {Content = _control, DataContext = dockable};
 
-            if (!s_window.IsVisible)
-            {
-                s_window.Show();
-            }
-        }
+        _window.Position = GetPositionWithinWindow(_window, position, offset);
+
+        _window.Show();
     }
 
     public void Move(PixelPoint position, PixelPoint offset, string status)
     {
-        lock (s_sync)
-        {
-            if (s_window is null || s_control is null)
-            {
-                return;
-            }
+        if (_window is null || _control is null)
+            return;
 
-            s_control.Status = status;
-            s_window.Position = GetPositionWithinWindow(s_window, position, offset);
-        }
+        _control.Status = status;
+        _window.Position = GetPositionWithinWindow(_window, position, offset);
     }
 
     public void Hide()
     {
-        lock (s_sync)
-        {
-            if (s_window is null)
-            {
-                return;
-            }
+        if (_window is null)
+            return;
 
-            s_window.Close();
-            s_window = null;
-            s_control = null;
-        }
+        _window.Close();
+        _window = null;
+        _control = null;
     }
 }

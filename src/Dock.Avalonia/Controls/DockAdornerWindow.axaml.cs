@@ -3,14 +3,14 @@
 using System;
 using Avalonia.Controls;
 using Avalonia.Controls.Metadata;
+using Iciclecreek.Avalonia.WindowManager;
 
 namespace Dock.Avalonia.Controls;
 
 /// <summary>
 /// Window used to display dock adorners when using floating overlay.
 /// </summary>
-public class DockAdornerWindow : Window
+public class DockAdornerWindow : WindowImpl
 {
-    /// <inheritdoc/>
-    protected override Type StyleKeyOverride => typeof(DockAdornerWindow);
+    
 }
