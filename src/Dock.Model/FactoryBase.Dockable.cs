@@ -464,20 +464,33 @@ public abstract partial class FactoryBase
     /// <inheritdoc/>
     public void HidePreviewingDockables(IRootDock rootDock)
     {
+        HidePreviewingDockablesInternal(rootDock, respectKeepVisible: true);
+    }
+
+    private void HidePreviewingDockablesInternal(IRootDock rootDock, bool respectKeepVisible)
+    {
         if (rootDock.PinnedDock?.VisibleDockables is null)
         {
             return;
         }
 
-        foreach (var dockable in rootDock.PinnedDock.VisibleDockables)
+        var dockables = rootDock.PinnedDock.VisibleDockables.ToList();
+        foreach (var dockable in dockables)
         {
+            if (respectKeepVisible && dockable.KeepPinnedDockableVisible)
+            {
+                continue;
+            }
+
             dockable.Owner = dockable.OriginalOwner;
             dockable.OriginalOwner = null;
+            RemoveVisibleDockable(rootDock.PinnedDock, dockable);
         }
 
-        RemoveAllVisibleDockables(rootDock.PinnedDock);
-
-        rootDock.PinnedDock = null;
+        if (rootDock.PinnedDock.VisibleDockables?.Count == 0)
+        {
+            rootDock.PinnedDock = null;
+        }
     }
 
     /// <inheritdoc/>
@@ -489,7 +502,7 @@ public abstract partial class FactoryBase
             return;
         }
 
-        HidePreviewingDockables(rootDock);
+        HidePreviewingDockablesInternal(rootDock, respectKeepVisible: false);
 
         var owner = dockable.Owner;
         
@@ -510,8 +523,14 @@ public abstract partial class FactoryBase
 
         RemoveAllVisibleDockables(rootDock.PinnedDock);
 
-        dockable.OriginalOwner = owner;
-        AddVisibleDockable(rootDock.PinnedDock!, dockable);
+        if (rootDock.PinnedDock.VisibleDockables?.Contains(dockable) != true)
+        {
+            if (dockable.OriginalOwner is null)
+            {
+                dockable.OriginalOwner = owner;
+            }
+            AddVisibleDockable(rootDock.PinnedDock!, dockable);
+        }
  
         InitDockable(rootDock.PinnedDock, rootDock);
     }
@@ -710,7 +729,7 @@ public abstract partial class FactoryBase
                     {
                         Debug.Assert(dockable.OriginalOwner is IDock);
                         var originalOwner = (IDock)dockable.OriginalOwner!;
-                        HidePreviewingDockables(rootDock);
+                        HidePreviewingDockablesInternal(rootDock, respectKeepVisible: false);
                         AddVisibleDockable(originalOwner, dockable);
                     }
 
@@ -1043,6 +1062,7 @@ public abstract partial class FactoryBase
             targetDock.Id = sourceDock.Id;
             targetDock.CanCreateDocument = sourceDock.CanCreateDocument;
             targetDock.EnableWindowDrag = sourceDock.EnableWindowDrag;
+            targetDock.LayoutMode = sourceDock.LayoutMode;
 
             if (sourceDock is IDocumentDockContent sdc && targetDock is IDocumentDockContent tdc)
             {
@@ -1071,6 +1091,21 @@ public abstract partial class FactoryBase
 
     /// <inheritdoc/>
     public void SetDocumentDockTabsLayoutRight(IDockable dockable) => SetDocumentDockTabsLayout(dockable, DocumentTabLayout.Right);
+
+    /// <inheritdoc/>
+    public virtual void SetDocumentDockLayoutMode(IDockable dockable, DocumentLayoutMode layoutMode)
+    {
+        if (dockable is IDocumentDock documentDock)
+        {
+            documentDock.LayoutMode = layoutMode;
+        }
+    }
+
+    /// <inheritdoc/>
+    public void SetDocumentDockLayoutModeTabbed(IDockable dockable) => SetDocumentDockLayoutMode(dockable, DocumentLayoutMode.Tabbed);
+
+    /// <inheritdoc/>
+    public void SetDocumentDockLayoutModeMdi(IDockable dockable) => SetDocumentDockLayoutMode(dockable, DocumentLayoutMode.Mdi);
     
     /// <inheritdoc/>
     public virtual void NewVerticalDocumentDock(IDockable dockable)
@@ -1089,6 +1124,7 @@ public abstract partial class FactoryBase
             targetDock.Id = sourceDock.Id;
             targetDock.CanCreateDocument = sourceDock.CanCreateDocument;
             targetDock.EnableWindowDrag = sourceDock.EnableWindowDrag;
+            targetDock.LayoutMode = sourceDock.LayoutMode;
 
             if (sourceDock is IDocumentDockContent sdc && targetDock is IDocumentDockContent tdc)
             {
@@ -1255,13 +1291,43 @@ public abstract partial class FactoryBase
         UpdateIsEmpty(dock);
     }
 
+    private static bool IsDockableEmpty(IDockable? dockable)
+    {
+        return dockable is null
+               || dockable is ISplitter
+               || dockable is IDock { IsEmpty: true, IsCollapsable: true };
+    }
+
+    private static bool IsSplitViewDockEmpty(ISplitViewDock splitViewDock)
+    {
+        var visibleDockables = splitViewDock.VisibleDockables;
+        if (visibleDockables is { Count: > 0 } &&
+            visibleDockables.Any(dockable => !IsDockableEmpty(dockable)))
+        {
+            return false;
+        }
+
+        return IsSplitViewDockContentEmpty(splitViewDock);
+    }
+
+    private static bool IsSplitViewDockContentEmpty(ISplitViewDock splitViewDock)
+    {
+        return IsDockableEmpty(splitViewDock.PaneDockable)
+               && IsDockableEmpty(splitViewDock.ContentDockable);
+    }
+
     private void UpdateIsEmpty(IDock dock)
     {
         bool oldIsEmpty = dock.IsEmpty;
+        var visibleDockables = dock.VisibleDockables;
 
-        var newIsEmpty = dock.VisibleDockables == null
-                         || dock.VisibleDockables?.Count == 0
-                         || dock.VisibleDockables!.All(x => x is IDock { IsEmpty: true, IsCollapsable: true } or ISplitter);
+        var newIsEmpty = dock switch
+        {
+            ISplitViewDock splitViewDock => IsSplitViewDockEmpty(splitViewDock),
+            _ => visibleDockables == null
+                 || visibleDockables.Count == 0
+                 || visibleDockables.All(IsDockableEmpty)
+        };
 
         if (oldIsEmpty != newIsEmpty)
         {
